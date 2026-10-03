@@ -1,0 +1,37 @@
+databases:
+  - name: seat-reservation-db
+    databaseName: seats
+    user: seats
+    plan: free
+
+services:
+  - type: web
+    name: seat-reservation
+    runtime: docker
+    plan: free
+    healthCheckPath: /readyz
+    envVars:
+      - key: DATABASE_HOST
+        fromDatabase:
+          name: seat-reservation-db
+          property: host
+      - key: DATABASE_PORT
+        fromDatabase:
+          name: seat-reservation-db
+          property: port
+      - key: DATABASE_NAME
+        fromDatabase:
+          name: seat-reservation-db
+          property: database
+      - key: DATABASE_USERNAME
+        fromDatabase:
+          name: seat-reservation-db
+          property: user
+      - key: DATABASE_PASSWORD
+        fromDatabase:
+          name: seat-reservation-db
+          property: password
+      - key: ADMIN_TOKEN
+        generateValue: true
+      - key: USER_TOKEN_SECRET
+        generateValue: true

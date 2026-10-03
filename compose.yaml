@@ -1,0 +1,31 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: seats
+      POSTGRES_USER: seats
+      POSTGRES_PASSWORD: seats
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U seats -d seats"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+  app:
+    build: .
+    environment:
+      DATABASE_HOST: db
+      DATABASE_NAME: seats
+      DATABASE_USERNAME: seats
+      DATABASE_PASSWORD: seats
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-dev-admin-token}
+      USER_TOKEN_SECRET: ${USER_TOKEN_SECRET:-local-development-secret-change-me}
+      DB_POOL_SIZE: 40
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+volumes:
+  postgres-data:
