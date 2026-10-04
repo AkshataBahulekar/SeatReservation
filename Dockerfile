@@ -1,6 +1,7 @@
 FROM maven:3.9.9-eclipse-temurin-21 AS build
 WORKDIR /workspace
 COPY pom.xml .
+COPY .git ./.git
 COPY src ./src
 RUN mvn -B -DskipTests package
 

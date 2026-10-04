@@ -47,6 +47,7 @@ Inspect a show with `GET /shows/{id}`; cancel the owner's reservation with `POST
 - `GET /livez`: process liveness.
 - `GET /readyz`: readiness, including PostgreSQL connectivity.
 - `GET /actuator/prometheus`: Prometheus metrics. Includes `reservations_confirmed_total`, `reservations_declined_total{reason=...}` (`seat-taken`, `per-user-limit`, `idempotent-replay`, and other domain declines), and `seats_available` across shows.
+- `GET /actuator/info`: build information including the full Git commit SHA under `git.commit.id`. Maven generates `git.properties` during packaging; the Docker build includes the repository metadata so deployed builds expose the source revision.
 - Each request emits a JSON structured log event with request ID, method, path, status, and duration; use or supply `X-Request-Id` for correlation. Hosting-platform logs are available through the provider dashboard.
 
 ### PostgreSQL lock-wait diagnostics
@@ -77,7 +78,7 @@ WHERE l.pid = 12345 -- replace with the blocked backend PID
 ORDER BY l.granted, l.locktype;
 ```
 
-Single-seat requests use one status-guarded `UPDATE`, so PostgreSQL's row update is the atomic decision and competitors wait on that seat row. Multi-seat requests retain deterministic `SELECT ... FOR UPDATE` locking and all-or-nothing transaction handling. Keep the database work inside these short transactions; do not perform network calls or other slow work within them.
+Single-seat requests use one status-guarded `UPDATE` as the atomic claim, then insert the reservation only if that update succeeds. The `seats.reservation_id` foreign key is deferred until transaction commit to preserve referential integrity with that write order. Multi-seat requests retain deterministic `SELECT ... FOR UPDATE` locking and all-or-nothing transaction handling. Keep the database work inside these short transactions; do not perform network calls or other slow work within them.
 
 ## Concurrency burst
 
