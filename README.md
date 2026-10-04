@@ -89,6 +89,16 @@ python burst.py https://YOUR-SERVICE.onrender.com
 
 Options: `--requests 500` (default, maximum 20000), `--workers 100` (maximum simultaneous requests), `--timeout 600` (per-request seconds), `--admin-token ...`, and `--token-secret ...`. Use the corresponding configured secrets. Reservation requests may be retried after timeouts or incomplete HTTP response bodies using the same idempotency key; the script reports exhausted transport failures separately from HTTP 5xx responses. Its JSON output includes elapsed time for show creation, the concurrent reservation burst, outcome aggregation, idempotency checks, final reconciliation, and overall runtime, plus p50/p95/maximum reservation-request latency. It fails if it observes a 5xx, transport failure, anything other than one successful winner, or a broken reconciliation invariant. In addition to the hot-seat storm it verifies a successful same-key replay and same-key/different-body conflict.
 
+### Correctness integration scenarios
+
+Run the broader correctness harness against a running API and database:
+
+```sh
+python correctness_tests.py http://localhost:8080
+```
+
+It creates isolated shows and tests simultaneous requests against multiple hot seats, overlapping all-or-nothing multi-seat requests (for example, `["A1","A2"]` racing `["A2","A3"]`), reversed-input-order multi-seat contention for deadlock detection, concurrent same-key/same-body retries, concurrent same-key/different-body requests, a per-user limit race, token-derived identity and owner-only cancellation/rebooking, and show-count reconciliation sampled continuously during a reservation burst. The deadlock case launches concurrent requests for the same pair of seats while alternating the submitted order (for example, `["A","B"]` and `["B","A"]`); it expects one confirmation and clean `409 seat-taken` responses for all other requests, with no server or transport errors. It prints a result for each test and exits nonzero on any failed assertion, unexpected status, malformed response, transport error, or reconciliation mismatch. Use the service's configured secrets with `--admin-token` and `--token-secret`. Request counts and limits can be adjusted; see `python correctness_tests.py --help`.
+
 ## Deploy
 
 `render.yaml` describes a Render Docker web service and PostgreSQL database. Create a Render Blueprint from the repository; the platform generates `ADMIN_TOKEN` and `USER_TOKEN_SECRET`. The repository does not contain live deployment credentials or a deployed public URL.
