@@ -33,20 +33,28 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
         String requestId = suppliedId != null && SAFE_REQUEST_ID.matcher(suppliedId).matches()
                 ? suppliedId : UUID.randomUUID().toString();
         long started = System.nanoTime();
+        String previousRequestId = MDC.get("request_id");
         MDC.put("request_id", requestId);
         response.setHeader("X-Request-Id", requestId);
         try {
             filterChain.doFilter(request, response);
         } finally {
-            var event = new LinkedHashMap<String, Object>();
-            event.put("event", "http_request");
-            event.put("request_id", requestId);
-            event.put("method", request.getMethod());
-            event.put("path", request.getRequestURI());
-            event.put("status", response.getStatus());
-            event.put("duration_ms", (System.nanoTime() - started) / 1_000_000);
-            log.info(objectMapper.writeValueAsString(event));
-            MDC.remove("request_id");
+            try {
+                var event = new LinkedHashMap<String, Object>();
+                event.put("event", "http_request");
+                event.put("request_id", requestId);
+                event.put("method", request.getMethod());
+                event.put("path", request.getRequestURI());
+                event.put("status", response.getStatus());
+                event.put("duration_ms", (System.nanoTime() - started) / 1_000_000);
+                log.info(objectMapper.writeValueAsString(event));
+            } finally {
+                if (previousRequestId == null) {
+                    MDC.remove("request_id");
+                } else {
+                    MDC.put("request_id", previousRequestId);
+                }
+            }
         }
     }
 }
