@@ -57,7 +57,7 @@ Run `python burst.py http://localhost:8080` (or pass the deployed base URL). It 
 python burst.py https://YOUR-SERVICE.onrender.com
 ```
 
-Options: `--requests 500` (default), `--admin-token ...`, and `--token-secret ...`. Use the corresponding configured secrets. The script fails if it observes 5xx, anything other than one successful winner, or a broken reconciliation invariant. In addition to the hot-seat storm it verifies a successful same-key replay and same-key/different-body conflict.
+Options: `--requests 500` (default, maximum 20000), `--workers 100` (maximum simultaneous requests), `--timeout 600` (per-request seconds), `--admin-token ...`, and `--token-secret ...`. Use the corresponding configured secrets. Reservation requests may be retried after transport timeouts using the same idempotency key; the script reports exhausted transport failures separately from HTTP 5xx responses. It fails if it observes a 5xx, transport failure, anything other than one successful winner, or a broken reconciliation invariant. In addition to the hot-seat storm it verifies a successful same-key replay and same-key/different-body conflict.
 
 ## Deploy
 

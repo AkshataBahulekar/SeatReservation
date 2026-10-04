@@ -2,6 +2,9 @@ server:
   port: ${PORT:8080}
   shutdown: graceful
 spring:
+  threads:
+    virtual:
+      enabled: true
   datasource:
     url: jdbc:postgresql://${DATABASE_HOST:localhost}:${DATABASE_PORT:5432}/${DATABASE_NAME:seats}
     username: ${DATABASE_USERNAME:seats}
