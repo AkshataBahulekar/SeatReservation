@@ -112,6 +112,10 @@ The tests cover the API models, controller authentication and response mapping, 
 
 ## Deploy
 
-`render.yaml` describes a Render Docker web service and PostgreSQL database. Create a Render Blueprint from the repository; the platform generates `ADMIN_TOKEN` and `USER_TOKEN_SECRET`. The repository does not contain live deployment credentials or a deployed public URL.
+`render.yaml` describes a Render Docker web service and PostgreSQL database. Create a Render Blueprint from the repository; the platform generates `ADMIN_TOKEN` and `USER_TOKEN_SECRET`.
+
+Public deployment: https://seat-reservation-w6dh.onrender.com/
+
+Health, metrics, and build information are available at `/livez`, `/readyz`, `/actuator/prometheus`, and `/actuator/info` on the deployed base URL.
 
 See [WRITEUP.md](WRITEUP.md) for design tradeoffs and AI-use disclosure.
