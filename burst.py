@@ -2,6 +2,7 @@
 import argparse
 import base64
 import concurrent.futures
+import http.client
 import hashlib
 import hmac
 import json
@@ -18,7 +19,6 @@ def request(base_url, path, method="GET", payload=None, headers=None, timeout=60
     request_headers = {"Content-Type": "application/json"}
     if headers:
         request_headers.update(headers)
-    first_status = None
     for attempt in range(retries + 1):
         req = urllib.request.Request(
             base_url.rstrip("/") + path, data=body, headers=request_headers, method=method
@@ -28,24 +28,23 @@ def request(base_url, path, method="GET", payload=None, headers=None, timeout=60
                 status = response.status
                 try:
                     response_body = response.read()
-                except OSError as error:
-                    first_status = first_status or status
+                except (OSError, http.client.HTTPException) as error:
                     if attempt < retries:
                         time.sleep(0.25 * (2 ** attempt))
                         continue
-                    return 599, str(error).encode()
-                return first_status or status, response_body
+                    return 599, f"Incomplete HTTP {status} response: {error}".encode()
+                return status, response_body
         except urllib.error.HTTPError as response:
             try:
                 response_body = response.read()
-            except OSError as error:
-                first_status = first_status or response.code
+            except (OSError, http.client.HTTPException) as error:
+                response.close()
                 if attempt < retries:
                     time.sleep(0.25 * (2 ** attempt))
                     continue
-                return 599, str(error).encode()
-            return first_status or response.code, response_body
-        except OSError as error:
+                return 599, f"Incomplete HTTP {response.code} response: {error}".encode()
+            return response.code, response_body
+        except (OSError, http.client.HTTPException) as error:
             if attempt < retries:
                 time.sleep(0.25 * (2 ** attempt))
                 continue
@@ -78,16 +77,20 @@ def main():
         parser.error("--workers and --timeout must be positive")
 
     run_id = uuid.uuid4().hex
+    timings = {}
+    total_started = time.monotonic()
     show_request = {
         "name": "burst-" + run_id[:12],
         "seats": ["HOT-SEAT", "OTHER-1", "OTHER-2", "OTHER-3"],
         "price_paise": 25000,
     }
+    phase_started = time.monotonic()
     status, body = request(
         args.base_url, "/shows", "POST", show_request,
         {"X-Admin-Token": args.admin_token},
         timeout=args.timeout,
     )
+    timings["create_show_seconds"] = round(time.monotonic() - phase_started, 3)
     if status != 201:
         print(f"Could not create show: HTTP {status} {body.decode(errors='replace')}", file=sys.stderr)
         return 1
@@ -96,6 +99,7 @@ def main():
     def reserve(index):
         user = f"burst-{run_id}-{index}"
         idempotency_key = f"{run_id}-hot-seat-{index}"
+        request_started = time.monotonic()
         result, response = request(
             args.base_url,
             f"/shows/{show_id}/reserve",
@@ -105,20 +109,33 @@ def main():
             timeout=args.timeout,
             retries=2,
         )
+        request_elapsed = time.monotonic() - request_started
         try:
             error = json.loads(response).get("error", "")
         except (ValueError, AttributeError):
             error = ""
-        return index, result, error, response
+        return index, result, error, response, request_elapsed
 
     started = time.monotonic()
     with concurrent.futures.ThreadPoolExecutor(max_workers=min(args.requests, args.workers)) as pool:
         results = list(pool.map(reserve, range(args.requests)))
     elapsed = time.monotonic() - started
+    timings["reservation_burst_seconds"] = round(elapsed, 3)
+    request_latencies = sorted(result[4] for result in results)
 
+    def percentile(values, fraction):
+        return values[min(int((len(values) - 1) * fraction), len(values) - 1)]
+
+    request_latency_summary = {
+        "p50_seconds": round(percentile(request_latencies, 0.50), 3),
+        "p95_seconds": round(percentile(request_latencies, 0.95), 3),
+        "max_seconds": round(request_latencies[-1], 3),
+    }
+
+    phase_started = time.monotonic()
     summary = Counter()
     five_xx = []
-    for _, status, error, response in results:
+    for _, status, error, response, _ in results:
         if status == 201:
             summary["confirmed"] += 1
         elif status == 409:
@@ -134,10 +151,13 @@ def main():
         else:
             summary[f"unexpected-http-{status}"] += 1
 
+    timings["outcome_aggregation_seconds"] = round(time.monotonic() - phase_started, 3)
+
+    phase_started = time.monotonic()
     winner = next((result for result in results if result[1] == 201), None)
     idempotency_checks = {"replay_http_status": None, "different_body_http_status": None}
     if winner:
-        index, _, _, original_body = winner
+        index, _, _, original_body, _ = winner
         user = f"burst-{run_id}-{index}"
         idempotency_key = f"{run_id}-hot-seat-{index}"
         headers = {"Authorization": "Bearer " + token_for(user, args.token_secret)}
@@ -166,16 +186,21 @@ def main():
         except (ValueError, KeyError, TypeError):
             same_reservation = False
         idempotency_checks["same_reservation"] = same_reservation
+    timings["idempotency_checks_seconds"] = round(time.monotonic() - phase_started, 3)
 
+    phase_started = time.monotonic()
     status, body = request(args.base_url, f"/shows/{show_id}", timeout=args.timeout)
     if status != 200:
         print(f"Could not read show state: HTTP {status} {body.decode(errors='replace')}", file=sys.stderr)
         return 1
     state = json.loads(body)
     total = state["available"] + state["held"] + state["confirmed"]
+    timings["final_reconciliation_seconds"] = round(time.monotonic() - phase_started, 3)
+    timings["total_seconds"] = round(time.monotonic() - total_started, 3)
     print(json.dumps({
         "requests": args.requests,
-        "elapsed_seconds": round(elapsed, 3),
+        "timings_seconds": timings,
+        "reservation_request_latency": request_latency_summary,
         "outcomes": dict(sorted(summary.items())),
         "idempotency_checks": idempotency_checks,
         "reconciliation": {

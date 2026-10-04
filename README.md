@@ -49,6 +49,36 @@ Inspect a show with `GET /shows/{id}`; cancel the owner's reservation with `POST
 - `GET /actuator/prometheus`: Prometheus metrics. Includes `reservations_confirmed_total`, `reservations_declined_total{reason=...}` (`seat-taken`, `per-user-limit`, `idempotent-replay`, and other domain declines), and `seats_available` across shows.
 - Each request emits a JSON structured log event with request ID, method, path, status, and duration; use or supply `X-Request-Id` for correlation. Hosting-platform logs are available through the provider dashboard.
 
+### PostgreSQL lock-wait diagnostics
+
+During a reservation burst, use these queries against the application database to inspect active sessions that are blocked on locks and identify their blockers:
+
+```sql
+SELECT pid, application_name, state, wait_event_type, wait_event,
+       now() - query_start AS query_age,
+       pg_blocking_pids(pid) AS blocking_pids,
+       left(query, 300) AS query
+FROM pg_stat_activity
+WHERE datname = current_database()
+  AND state <> 'idle'
+ORDER BY query_start;
+```
+
+Inspect granted and waiting locks for a particular blocked PID:
+
+```sql
+SELECT l.pid, l.locktype, l.mode, l.granted,
+       l.relation::regclass AS relation,
+       l.transactionid, a.wait_event_type, a.wait_event,
+       left(a.query, 300) AS query
+FROM pg_locks l
+LEFT JOIN pg_stat_activity a USING (pid)
+WHERE l.pid = 12345 -- replace with the blocked backend PID
+ORDER BY l.granted, l.locktype;
+```
+
+Single-seat requests use one status-guarded `UPDATE`, so PostgreSQL's row update is the atomic decision and competitors wait on that seat row. Multi-seat requests retain deterministic `SELECT ... FOR UPDATE` locking and all-or-nothing transaction handling. Keep the database work inside these short transactions; do not perform network calls or other slow work within them.
+
 ## Concurrency burst
 
 Run `python burst.py http://localhost:8080` (or pass the deployed base URL). It creates a fresh show, signs a distinct user token for each request, fires a configurable hot-seat stampede, prints status/reason distribution, then verifies and prints final seat-count reconciliation.
@@ -57,7 +87,7 @@ Run `python burst.py http://localhost:8080` (or pass the deployed base URL). It 
 python burst.py https://YOUR-SERVICE.onrender.com
 ```
 
-Options: `--requests 500` (default, maximum 20000), `--workers 100` (maximum simultaneous requests), `--timeout 600` (per-request seconds), `--admin-token ...`, and `--token-secret ...`. Use the corresponding configured secrets. Reservation requests may be retried after transport timeouts using the same idempotency key; the script reports exhausted transport failures separately from HTTP 5xx responses. It fails if it observes a 5xx, transport failure, anything other than one successful winner, or a broken reconciliation invariant. In addition to the hot-seat storm it verifies a successful same-key replay and same-key/different-body conflict.
+Options: `--requests 500` (default, maximum 20000), `--workers 100` (maximum simultaneous requests), `--timeout 600` (per-request seconds), `--admin-token ...`, and `--token-secret ...`. Use the corresponding configured secrets. Reservation requests may be retried after timeouts or incomplete HTTP response bodies using the same idempotency key; the script reports exhausted transport failures separately from HTTP 5xx responses. Its JSON output includes elapsed time for show creation, the concurrent reservation burst, outcome aggregation, idempotency checks, final reconciliation, and overall runtime, plus p50/p95/maximum reservation-request latency. It fails if it observes a 5xx, transport failure, anything other than one successful winner, or a broken reconciliation invariant. In addition to the hot-seat storm it verifies a successful same-key replay and same-key/different-body conflict.
 
 ## Deploy
 

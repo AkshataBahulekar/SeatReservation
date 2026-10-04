@@ -141,30 +141,55 @@ public class ReservationService {
             return ReservationResult.declined("per-user-limit", "Per-user seat limit exceeded");
         }
 
-        List<SeatRecord> foundSeats = jdbc.getJdbcTemplate().query(
-                """
-                SELECT seat_label, status FROM seats
-                WHERE show_id = ? AND seat_label IN (%s)
-                ORDER BY seat_label COLLATE "C" FOR UPDATE
-                """.formatted(placeholders(seats.size())),
-                (row, index) -> new SeatRecord(row.getString("seat_label"), row.getString("status")),
-                parameters(showId, seats));
-        if (foundSeats.size() != seats.size()) {
-            recordDecline(userId, request.idempotency_key(), "seat-unavailable");
-            metrics.declined("seat-unavailable");
-            return ReservationResult.declined("seat-unavailable", "One or more seats do not exist or are unavailable");
-        }
-        if (foundSeats.stream().anyMatch(seat -> !"available".equals(seat.status()))) {
-            recordDecline(userId, request.idempotency_key(), "seat-taken");
-            metrics.declined("seat-taken");
-            return ReservationResult.declined("seat-taken", "One or more seats are already taken");
-        }
-
         UUID reservationId = UUID.randomUUID();
         long amount = Math.multiplyExact(show.pricePaise(), seats.size());
-        jdbc.getJdbcTemplate().update(
-                "INSERT INTO reservations(id, show_id, user_id, amount_paise, status) VALUES (?, ?, ?, ?, 'confirmed')",
-                reservationId, showId, userId, amount);
+
+        if (seats.size() == 1) {
+            jdbc.getJdbcTemplate().update(
+                    "INSERT INTO reservations(id, show_id, user_id, amount_paise, status) VALUES (?, ?, ?, ?, 'confirmed')",
+                    reservationId, showId, userId, amount);
+            int changed = jdbc.getJdbcTemplate().update(
+                    """
+                    UPDATE seats SET status = 'confirmed', reservation_id = ?
+                    WHERE show_id = ? AND seat_label = ? AND status = 'available'
+                    """,
+                    reservationId, showId, seats.get(0));
+            if (changed != 1) {
+                jdbc.getJdbcTemplate().update("DELETE FROM reservations WHERE id = ?", reservationId);
+                boolean seatExists = Boolean.TRUE.equals(jdbc.getJdbcTemplate().queryForObject(
+                        "SELECT EXISTS (SELECT 1 FROM seats WHERE show_id = ? AND seat_label = ?)",
+                        Boolean.class, showId, seats.get(0)));
+                String reason = seatExists ? "seat-taken" : "seat-unavailable";
+                recordDecline(userId, request.idempotency_key(), reason);
+                metrics.declined(reason);
+                return seatExists
+                        ? ReservationResult.declined(reason, "One or more seats are already taken")
+                        : ReservationResult.declined(reason, "One or more seats do not exist or are unavailable");
+            }
+        } else {
+            List<SeatRecord> foundSeats = jdbc.getJdbcTemplate().query(
+                    """
+                    SELECT seat_label, status FROM seats
+                    WHERE show_id = ? AND seat_label IN (%s)
+                    ORDER BY seat_label COLLATE "C" FOR UPDATE
+                    """.formatted(placeholders(seats.size())),
+                    (row, index) -> new SeatRecord(row.getString("seat_label"), row.getString("status")),
+                    parameters(showId, seats));
+            if (foundSeats.size() != seats.size()) {
+                recordDecline(userId, request.idempotency_key(), "seat-unavailable");
+                metrics.declined("seat-unavailable");
+                return ReservationResult.declined("seat-unavailable", "One or more seats do not exist or are unavailable");
+            }
+            if (foundSeats.stream().anyMatch(seat -> !"available".equals(seat.status()))) {
+                recordDecline(userId, request.idempotency_key(), "seat-taken");
+                metrics.declined("seat-taken");
+                return ReservationResult.declined("seat-taken", "One or more seats are already taken");
+            }
+            jdbc.getJdbcTemplate().update(
+                    "INSERT INTO reservations(id, show_id, user_id, amount_paise, status) VALUES (?, ?, ?, ?, 'confirmed')",
+                    reservationId, showId, userId, amount);
+        }
+
         var reservationSeats = seats.stream()
                 .map(seat -> new MapSqlParameterSource()
                         .addValue("reservationId", reservationId)
@@ -174,14 +199,16 @@ public class ReservationService {
         jdbc.batchUpdate(
                 "INSERT INTO reservation_seats(reservation_id, show_id, seat_label) VALUES (:reservationId, :showId, :seat)",
                 reservationSeats);
-        int changed = jdbc.getJdbcTemplate().update(
-                """
-                UPDATE seats SET status = 'confirmed', reservation_id = ?
-                WHERE show_id = ? AND seat_label IN (%s) AND status = 'available'
-                """.formatted(placeholders(seats.size())),
-                parameters(reservationId, showId, seats));
-        if (changed != seats.size()) {
-            throw new IllegalStateException("Locked seat rows changed unexpectedly");
+        if (seats.size() > 1) {
+            int changed = jdbc.getJdbcTemplate().update(
+                    """
+                    UPDATE seats SET status = 'confirmed', reservation_id = ?
+                    WHERE show_id = ? AND seat_label IN (%s) AND status = 'available'
+                    """.formatted(placeholders(seats.size())),
+                    parameters(reservationId, showId, seats));
+            if (changed != seats.size()) {
+                throw new IllegalStateException("Locked seat rows changed unexpectedly");
+            }
         }
         jdbc.getJdbcTemplate().update(
                 "UPDATE user_show_counts SET seat_count = seat_count + ? WHERE show_id = ? AND user_id = ?",
