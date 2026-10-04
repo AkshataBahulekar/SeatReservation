@@ -22,11 +22,13 @@ CREATE TABLE IF NOT EXISTS seats (
     show_id UUID NOT NULL REFERENCES shows(id),
     seat_label VARCHAR(40) NOT NULL,
     status VARCHAR(20) NOT NULL CHECK (status IN ('available', 'confirmed')),
-    reservation_id UUID REFERENCES reservations(id),
+    reservation_id UUID CONSTRAINT seats_reservation_id_fkey
+        REFERENCES reservations(id) DEFERRABLE INITIALLY DEFERRED,
     PRIMARY KEY (show_id, seat_label),
     CHECK ((status = 'available' AND reservation_id IS NULL)
         OR (status = 'confirmed' AND reservation_id IS NOT NULL))
 );
+ALTER TABLE seats ALTER CONSTRAINT seats_reservation_id_fkey DEFERRABLE INITIALLY DEFERRED;
 CREATE INDEX IF NOT EXISTS seats_reservation_idx ON seats(reservation_id);
 
 CREATE TABLE IF NOT EXISTS reservation_seats (

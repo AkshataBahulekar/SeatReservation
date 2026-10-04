@@ -145,9 +145,6 @@ public class ReservationService {
         long amount = Math.multiplyExact(show.pricePaise(), seats.size());
 
         if (seats.size() == 1) {
-            jdbc.getJdbcTemplate().update(
-                    "INSERT INTO reservations(id, show_id, user_id, amount_paise, status) VALUES (?, ?, ?, ?, 'confirmed')",
-                    reservationId, showId, userId, amount);
             int changed = jdbc.getJdbcTemplate().update(
                     """
                     UPDATE seats SET status = 'confirmed', reservation_id = ?
@@ -155,7 +152,6 @@ public class ReservationService {
                     """,
                     reservationId, showId, seats.get(0));
             if (changed != 1) {
-                jdbc.getJdbcTemplate().update("DELETE FROM reservations WHERE id = ?", reservationId);
                 boolean seatExists = Boolean.TRUE.equals(jdbc.getJdbcTemplate().queryForObject(
                         "SELECT EXISTS (SELECT 1 FROM seats WHERE show_id = ? AND seat_label = ?)",
                         Boolean.class, showId, seats.get(0)));
@@ -166,6 +162,9 @@ public class ReservationService {
                         ? ReservationResult.declined(reason, "One or more seats are already taken")
                         : ReservationResult.declined(reason, "One or more seats do not exist or are unavailable");
             }
+            jdbc.getJdbcTemplate().update(
+                    "INSERT INTO reservations(id, show_id, user_id, amount_paise, status) VALUES (?, ?, ?, ?, 'confirmed')",
+                    reservationId, showId, userId, amount);
         } else {
             List<SeatRecord> foundSeats = jdbc.getJdbcTemplate().query(
                     """
