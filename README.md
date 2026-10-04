@@ -100,6 +100,16 @@ python correctness_tests.py http://localhost:8080
 
 It creates isolated shows and tests simultaneous requests against multiple hot seats, overlapping all-or-nothing multi-seat requests (for example, `["A1","A2"]` racing `["A2","A3"]`), reversed-input-order multi-seat contention for deadlock detection, concurrent same-key/same-body retries, concurrent same-key/different-body requests, a per-user limit race, token-derived identity and owner-only cancellation/rebooking, and show-count reconciliation sampled continuously during a reservation burst. The deadlock case launches concurrent requests for the same pair of seats while alternating the submitted order (for example, `["A","B"]` and `["B","A"]`); it expects one confirmation and clean `409 seat-taken` responses for all other requests, with no server or transport errors. It prints a result for each test and exits nonzero on any failed assertion, unexpected status, malformed response, transport error, or reconciliation mismatch. Use the service's configured secrets with `--admin-token` and `--token-secret`. Request counts and limits can be adjusted; see `python correctness_tests.py --help`.
 
+### Java unit tests
+
+Run the unit tests with Maven:
+
+```sh
+mvn test
+```
+
+The tests cover the API models, controller authentication and response mapping, exception handling, reservation input and not-found validation, metrics behavior, request-ID logging behavior, and Spring Boot application configuration. The Python correctness harness above exercises database-backed concurrent reservation flows against a running service.
+
 ## Deploy
 
 `render.yaml` describes a Render Docker web service and PostgreSQL database. Create a Render Blueprint from the repository; the platform generates `ADMIN_TOKEN` and `USER_TOKEN_SECRET`. The repository does not contain live deployment credentials or a deployed public URL.
