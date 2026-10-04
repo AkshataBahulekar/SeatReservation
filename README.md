@@ -90,6 +90,20 @@ python burst.py https://YOUR-SERVICE.onrender.com
 
 Options: `--requests 500` (default, maximum 20000), `--workers 100` (maximum simultaneous requests), `--timeout 600` (per-request seconds), `--admin-token ...`, and `--token-secret ...`. Use the corresponding configured secrets. Reservation requests may be retried after timeouts or incomplete HTTP response bodies using the same idempotency key; the script reports exhausted transport failures separately from HTTP 5xx responses. Its JSON output includes elapsed time for show creation, the concurrent reservation burst, outcome aggregation, idempotency checks, final reconciliation, and overall runtime, plus p50/p95/maximum reservation-request latency. It fails if it observes a 5xx, transport failure, anything other than one successful winner, or a broken reconciliation invariant. In addition to the hot-seat storm it verifies a successful same-key replay and same-key/different-body conflict.
 
+#### Reviewer test credentials
+
+The deployed service requires its configured admin token and user-token signing secret. Obtain these values through a private channel; do not commit them to this repository or publish them in logs/issues.
+
+PowerShell example (replace the placeholders in your local terminal):
+
+```powershell
+$adminToken = "<ADMIN_TOKEN>"
+$userTokenSecret = "<USER_TOKEN_SECRET>"
+python .\burst.py https://seat-reservation-w6dh.onrender.com --requests 20000 --admin-token $adminToken --token-secret $userTokenSecret
+```
+
+Run this from the repository directory after Python 3 is installed. The script creates a new test show and starts the hot-seat burst; wait for it to finish and inspect the printed outcome counts, idempotency checks, timing summary, and reconciliation. A non-zero exit code indicates the run failed one or more correctness assertions or encountered server/transport errors. A 20,000-request run can be demanding, so monitor the Render service and database logs while it runs.
+
 ### Correctness integration scenarios
 
 Run the broader correctness harness against a running API and database:
